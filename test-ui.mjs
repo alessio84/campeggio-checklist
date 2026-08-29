@@ -1,17 +1,18 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 let targets;
 for (let attempt = 0; attempt < 20; attempt++) {
   try {
-    targets = await fetch('http://127.0.0.1:9223/json/list').then(r => r.json());
+    targets = await fetch('http://127.0.0.1:9223/json/list').then(response => response.json());
     if (targets.length) break;
   } catch {}
   await sleep(250);
 }
 if (!targets?.length) throw new Error('Chromium CDP endpoint not ready');
 
-const target = targets.find(t => t.type === 'page' && t.url.includes('127.0.0.1:4173')) || targets[0];
+const target = targets.find(item => item.type === 'page' && item.url.includes('127.0.0.1:4173')) || targets[0];
 const ws = new WebSocket(target.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {
   ws.addEventListener('open', resolve, { once: true });
@@ -20,8 +21,15 @@ await new Promise((resolve, reject) => {
 
 let sequence = 0;
 const pending = new Map();
+const runtimeErrors = [];
 ws.addEventListener('message', event => {
   const message = JSON.parse(event.data);
+  if (message.method === 'Runtime.exceptionThrown') {
+    runtimeErrors.push(message.params.exceptionDetails?.text || 'Runtime exception');
+  }
+  if (message.method === 'Runtime.consoleAPICalled' && ['error', 'assert'].includes(message.params.type)) {
+    runtimeErrors.push(`console.${message.params.type}`);
+  }
   if (!message.id || !pending.has(message.id)) return;
   const { resolve, reject } = pending.get(message.id);
   pending.delete(message.id);
@@ -37,45 +45,214 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
 
 const evaluate = async expression => {
   const result = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text);
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Runtime evaluation failed');
   return result.result.value;
 };
 
-await send('Page.enable');
-await send('Runtime.enable');
-await sleep(800);
+const reload = async () => {
+  await send('Page.reload', { ignoreCache: true });
+  await sleep(700);
+};
 
-const initial = await evaluate(`({
+const snapshot = () => evaluate(`({
   title: document.title,
   checkboxCount: document.querySelectorAll('input[type="checkbox"][data-id]').length,
   done: document.getElementById('doneCount').textContent,
+  total: document.getElementById('totalCount').textContent,
   percent: document.getElementById('percent').textContent,
   manifest: document.querySelector('link[rel="manifest"]')?.getAttribute('href'),
-  sections: [...document.querySelectorAll('[data-section]')].map(s => s.querySelector('.section-count').textContent)
+  categories: [...document.querySelectorAll('[data-section]')].map(section => ({
+    name: section.querySelector('.section-name').textContent,
+    count: section.querySelector('.section-count').textContent,
+    items: [...section.querySelectorAll('input[type="checkbox"][data-id]')].map(box => ({ id: box.dataset.id, checked: box.checked }))
+  }))
 })`);
+
+const submitDialog = async ({ name, icon } = {}) => evaluate(`(() => {
+  const nameInput = document.getElementById('editorName');
+  nameInput.value = ${JSON.stringify(name ?? '')};
+  nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+  const iconInput = document.getElementById('editorIcon');
+  if (iconInput && ${icon !== undefined}) {
+    iconInput.value = ${JSON.stringify(icon)};
+    iconInput.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  document.getElementById('editorForm').requestSubmit();
+  return true;
+})()`);
+
+await send('Page.enable');
+await send('Runtime.enable');
+await send('Network.enable');
+await send('Emulation.setDeviceMetricsOverride', {
+  width: 390,
+  height: 844,
+  deviceScaleFactor: 1,
+  mobile: true
+});
+await sleep(800);
+
+await evaluate(`(async () => {
+  if ('serviceWorker' in navigator) {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map(registration => registration.unregister()));
+  }
+  const cacheNames = await caches.keys();
+  await Promise.all(cacheNames.map(cacheName => caches.delete(cacheName)));
+  return true;
+})()`);
+await evaluate(`localStorage.clear(); sessionStorage.clear();`);
+await reload();
+
+const migrated = await evaluate(`(() => {
+  localStorage.clear();
+  localStorage.setItem('campeggio-checklist-v1', JSON.stringify({ interfoni: true, grill: true }));
+  return true;
+})()`);
+assert.equal(migrated, true);
+await reload();
+const afterMigration = await evaluate(`(() => {
+  const state = JSON.parse(localStorage.getItem('campeggio-checklist-v2'));
+  return {
+    categories: state?.categories?.length,
+    items: state?.categories?.reduce((total, category) => total + category.items.length, 0),
+    checked: state?.categories?.flatMap(category => category.items).filter(item => item.checked).map(item => item.id),
+    legacyStillAvailable: Boolean(localStorage.getItem('campeggio-checklist-v1'))
+  };
+})()`);
+assert.deepEqual(afterMigration, {
+  categories: 3,
+  items: 26,
+  checked: ['interfoni', 'grill'],
+  legacyStillAvailable: true
+});
+
+await evaluate(`localStorage.clear()`);
+await reload();
+const initial = await snapshot();
+assert.equal(initial.title, 'Checklist campeggio');
+assert.equal(initial.checkboxCount, 26);
+assert.deepEqual(initial.categories.map(category => category.count), ['0/2', '0/7', '0/17']);
+assert.equal(initial.done, '0');
+assert.equal(initial.total, '26');
+assert.equal(initial.percent, '0%');
+assert.equal(initial.manifest, 'manifest.webmanifest');
+assert.ok(await evaluate(`Boolean(document.getElementById('newCategory'))`));
+
+await evaluate(`document.getElementById('newCategory').click()`);
+await submitDialog({ name: '' });
+assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal((await snapshot()).categories.length, 3);
+await evaluate(`document.getElementById('editorCancel').click()`);
 
 await evaluate(`document.querySelector('input[data-id="interfoni"]').click()`);
-await sleep(200);
-const afterClick = await evaluate(`({
-  checked: document.querySelector('input[data-id="interfoni"]').checked,
-  done: document.getElementById('doneCount').textContent,
-  percent: document.getElementById('percent').textContent,
-  saved: JSON.parse(localStorage.getItem('campeggio-checklist-v1')).interfoni
-})`);
+await sleep(150);
+const afterBaselineCheck = await snapshot();
+assert.equal(afterBaselineCheck.done, '1');
+assert.equal(afterBaselineCheck.categories[0].count, '1/2');
 
-await evaluate(`Promise.race([
-  navigator.serviceWorker.ready.then(() => true),
-  new Promise(resolve => setTimeout(() => resolve(false), 5000))
-])`);
-await send('Page.reload', { ignoreCache: true });
-await sleep(900);
-const afterReload = await evaluate(`({
-  checked: document.querySelector('input[data-id="interfoni"]').checked,
-  done: document.getElementById('doneCount').textContent,
-  controller: Boolean(navigator.serviceWorker.controller)
-})`);
+await evaluate(`document.getElementById('newCategory').click()`);
+await submitDialog({ name: 'Attrezzatura test', icon: '🧪' });
+await sleep(150);
+let afterCategory = await snapshot();
+assert.equal(afterCategory.categories.length, 4);
+assert.equal(afterCategory.categories.at(-1).name, 'Attrezzatura test');
+assert.equal(afterCategory.categories.at(-1).count, '0/0');
+assert.equal(afterCategory.total, '26');
 
-await send('Network.enable');
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
+  section.querySelector('[data-action="add-item"]').click();
+})()`);
+await submitDialog({ name: 'Lampada test' });
+await sleep(150);
+afterCategory = await snapshot();
+const testCategory = afterCategory.categories.find(category => category.name === 'Attrezzatura test');
+assert.equal(testCategory.count, '0/1');
+assert.equal(afterCategory.total, '27');
+assert.equal(afterCategory.categories.reduce((total, category) => total + category.items.length, 0), 27);
+
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
+  section.querySelector('input[type="checkbox"]').click();
+})()`);
+await sleep(150);
+const afterNewCheck = await snapshot();
+assert.equal(afterNewCheck.done, '2');
+assert.equal(afterNewCheck.total, '27');
+assert.equal(afterNewCheck.categories.find(category => category.name === 'Attrezzatura test').count, '1/1');
+assert.equal(afterNewCheck.percent, '7%');
+
+await reload();
+const afterReload = await snapshot();
+assert.equal(afterReload.done, '2');
+assert.equal(afterReload.total, '27');
+assert.equal(afterReload.categories.find(category => category.name === 'Attrezzatura test').items[0].checked, true);
+const persistedState = await evaluate(`JSON.parse(localStorage.getItem('campeggio-checklist-v2'))`);
+assert.equal(persistedState.version, 2);
+assert.equal(persistedState.categories.length, 4);
+
+const confirmMessages = [];
+await evaluate(`window.confirm = message => { window.__lastConfirm = message; return true; }`);
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
+  section.querySelector('[data-action="delete-item"]').click();
+})()`);
+await sleep(150);
+const afterItemDelete = await snapshot();
+assert.equal(afterItemDelete.total, '26');
+assert.equal(afterItemDelete.done, '1');
+assert.equal(afterItemDelete.categories.find(category => category.name === 'Attrezzatura test').count, '0/0');
+confirmMessages.push(await evaluate('window.__lastConfirm'));
+assert.match(confirmMessages[0], /Lampada test/);
+
+await evaluate(`document.getElementById('newCategory').click()`);
+await submitDialog({ name: 'Categoria da eliminare', icon: '🗑️' });
+await sleep(100);
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Categoria da eliminare');
+  section.querySelector('[data-action="add-item"]').click();
+})()`);
+await submitDialog({ name: 'Elemento da perdere' });
+await sleep(100);
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Categoria da eliminare');
+  section.querySelector('[data-action="delete-category"]').click();
+})()`);
+await sleep(150);
+const afterCategoryDelete = await snapshot();
+assert.equal(afterCategoryDelete.categories.length, 4);
+assert.equal(afterCategoryDelete.total, '26');
+assert.equal(afterCategoryDelete.done, '1');
+const categoryDeleteMessage = await evaluate('window.__lastConfirm');
+assert.match(categoryDeleteMessage, /Categoria da eliminare/);
+assert.match(categoryDeleteMessage, /1 elemento/);
+assert.match(categoryDeleteMessage, /persi|perder/);
+
+await evaluate(`document.getElementById('completeAll').click()`);
+await sleep(100);
+const afterCompleteAll = await snapshot();
+assert.equal(afterCompleteAll.done, '26');
+assert.equal(afterCompleteAll.total, '26');
+assert.equal(afterCompleteAll.percent, '100%');
+await evaluate(`document.getElementById('resetAll').click()`);
+await sleep(100);
+const afterReset = await snapshot();
+assert.equal(afterReset.done, '0');
+assert.equal(afterReset.percent, '0%');
+assert.match(await evaluate('window.__lastConfirm'), /togliere tutte le spunte/);
+await evaluate(`document.querySelector('input[data-id="interfoni"]').click()`);
+await sleep(100);
+
+await evaluate(`localStorage.removeItem('campeggio-checklist-v1')`);
+await evaluate(`navigator.serviceWorker.ready.then(() => true)`);
+await reload();
+if (!await evaluate('Boolean(navigator.serviceWorker.controller)')) {
+  await send('Page.reload', { ignoreCache: false });
+  await sleep(1000);
+}
+const controller = await evaluate('Boolean(navigator.serviceWorker.controller)');
+assert.equal(controller, true);
 await send('Network.emulateNetworkConditions', {
   offline: true,
   latency: 0,
@@ -85,11 +262,10 @@ await send('Network.emulateNetworkConditions', {
 });
 await send('Page.reload', { ignoreCache: false });
 await sleep(900);
-const offlineReload = await evaluate(`({
-  title: document.title,
-  loaded: document.querySelectorAll('input[type="checkbox"][data-id]').length,
-  controller: Boolean(navigator.serviceWorker.controller)
-})`);
+const offlineReload = await snapshot();
+assert.equal(offlineReload.title, 'Checklist campeggio');
+assert.equal(offlineReload.checkboxCount, 26);
+assert.equal(await evaluate('Boolean(navigator.serviceWorker.controller)'), true);
 await send('Network.emulateNetworkConditions', {
   offline: false,
   latency: 0,
@@ -98,11 +274,10 @@ await send('Network.emulateNetworkConditions', {
   connectionType: 'wifi'
 });
 
-await evaluate(`localStorage.removeItem('campeggio-checklist-v1'); localStorage.removeItem('campeggio-checklist-v1-updated')`);
-await send('Page.reload', { ignoreCache: true });
-await sleep(700);
+await evaluate(`localStorage.clear(); sessionStorage.clear()`);
+await reload();
 const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
 await fs.writeFile('/opt/data/campeggio-checklist/preview.png', Buffer.from(screenshot.data, 'base64'));
-
-console.log(JSON.stringify({ initial, afterClick, afterReload, offlineReload, screenshot: '/opt/data/campeggio-checklist/preview.png' }, null, 2));
+assert.deepEqual(runtimeErrors, []);
+console.log(JSON.stringify({ initial, afterMigration, afterReload, afterItemDelete, afterCategoryDelete, offlineReload, runtimeErrors, screenshot: '/opt/data/campeggio-checklist/preview.png' }, null, 2));
 ws.close();
