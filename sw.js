@@ -1,4 +1,4 @@
-const CACHE = 'campeggio-checklist-v3';
+const CACHE = 'campeggio-checklist-v4';
 const ASSETS = ['./', './index.html', './app.js', './sw.js', './manifest.webmanifest'];
 
 self.addEventListener('install', event => {

@@ -70,10 +70,12 @@
   const editorIconField = document.getElementById('editorIconField');
   const editorIcon = document.getElementById('editorIcon');
   const editorError = document.getElementById('editorError');
+  const editorSubmit = document.getElementById('editorSubmit');
 
   let state;
   let editorMode = 'category';
   let editorCategoryId = null;
+  let editorItemId = null;
 
   const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -226,6 +228,15 @@
       if (item.note) itemText.append(createElement('span', 'item-note', item.note));
       itemLabel.append(checkbox, itemText);
 
+      const itemActions = createElement('div', 'item-actions');
+      const editItemButton = createElement('button', 'section-btn edit-item', 'Modifica');
+      editItemButton.type = 'button';
+      editItemButton.dataset.action = 'edit-item';
+      editItemButton.dataset.categoryId = category.id;
+      editItemButton.dataset.itemId = item.id;
+      editItemButton.setAttribute('aria-label', `Modifica l'elemento ${item.text}`);
+      editItemButton.title = 'Modifica elemento';
+
       const deleteItemButton = createElement('button', 'section-btn danger delete-item', '×');
       deleteItemButton.type = 'button';
       deleteItemButton.dataset.action = 'delete-item';
@@ -233,7 +244,8 @@
       deleteItemButton.dataset.itemId = item.id;
       deleteItemButton.setAttribute('aria-label', `Elimina l'elemento ${item.text}`);
       deleteItemButton.title = 'Elimina elemento';
-      row.append(itemLabel, deleteItemButton);
+      itemActions.append(editItemButton, deleteItemButton);
+      row.append(itemLabel, itemActions);
       items.append(row);
     });
     if (!category.items.length) items.append(createElement('p', 'empty', 'Nessun elemento. Aggiungine uno per iniziare.'));
@@ -262,17 +274,27 @@
     editorError.textContent = '';
     editorForm.reset();
     editorDialog.close();
+    editorMode = 'category';
+    editorCategoryId = null;
+    editorItemId = null;
   };
 
-  const openEditor = (mode, categoryId = null) => {
+  const openEditor = (mode, categoryId = null, itemId = null) => {
+    const isCategory = mode === 'category';
+    const category = isCategory ? null : getCategory(categoryId);
+    const item = category?.items.find(candidate => candidate.id === itemId);
+    if (!isCategory && itemId && !item) return;
+
     editorMode = mode;
     editorCategoryId = categoryId;
-    const isCategory = mode === 'category';
-    editorTitle.textContent = isCategory ? 'Nuova categoria' : 'Nuovo elemento';
+    editorItemId = itemId;
+    editorTitle.textContent = item ? 'Modifica elemento' : isCategory ? 'Nuova categoria' : 'Nuovo elemento';
     editorNameLabel.textContent = isCategory ? 'Nome categoria' : 'Nome elemento';
+    editorSubmit.textContent = item ? 'Salva' : 'Aggiungi';
     editorIconField.hidden = !isCategory;
     editorIcon.value = '';
-    editorName.value = '';
+    editorName.value = item?.text ?? '';
+    editorName.removeAttribute('aria-invalid');
     editorError.textContent = '';
     editorDialog.showModal();
     editorName.focus();
@@ -322,6 +344,7 @@
     event.preventDefault();
     const { action, categoryId, itemId } = button.dataset;
     if (action === 'add-item') openEditor('item', categoryId);
+    if (action === 'edit-item') openEditor('item', categoryId, itemId);
     if (action === 'delete-item') removeItem(categoryId, itemId);
     if (action === 'delete-category') removeCategory(categoryId);
   });
@@ -331,9 +354,11 @@
     const name = editorName.value.trim();
     if (!name) {
       editorError.textContent = 'Inserisci un nome prima di salvare.';
+      editorName.setAttribute('aria-invalid', 'true');
       editorName.focus();
       return;
     }
+    editorName.removeAttribute('aria-invalid');
 
     if (editorMode === 'category') {
       const usedIds = new Set(state.categories.map(category => category.id));
@@ -349,8 +374,17 @@
         closeEditor();
         return;
       }
-      const usedIds = new Set(state.categories.flatMap(candidate => candidate.items.map(item => item.id)));
-      category.items.push({ id: newId('item', usedIds), text: name, checked: false });
+      if (editorItemId !== null) {
+        const item = category.items.find(candidate => candidate.id === editorItemId);
+        if (!item) {
+          closeEditor();
+          return;
+        }
+        item.text = name;
+      } else {
+        const usedIds = new Set(state.categories.flatMap(candidate => candidate.items.map(item => item.id)));
+        category.items.push({ id: newId('item', usedIds), text: name, checked: false });
+      }
     }
 
     saveState();

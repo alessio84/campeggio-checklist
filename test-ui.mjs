@@ -49,6 +49,14 @@ const evaluate = async expression => {
   return result.result.value;
 };
 
+const [appSource, htmlSource] = await Promise.all([
+  fs.readFile('/opt/data/campeggio-checklist/app.js', 'utf8'),
+  fs.readFile('/opt/data/campeggio-checklist/index.html', 'utf8')
+]);
+for (const sink of ['innerHTML', 'outerHTML', 'insertAdjacentHTML', 'document.write']) {
+  assert.equal(appSource.includes(sink) || htmlSource.includes(sink), false, `unsafe sink found: ${sink}`);
+}
+
 const reload = async () => {
   await send('Page.reload', { ignoreCache: true });
   await sleep(700);
@@ -62,9 +70,16 @@ const snapshot = () => evaluate(`({
   percent: document.getElementById('percent').textContent,
   manifest: document.querySelector('link[rel="manifest"]')?.getAttribute('href'),
   categories: [...document.querySelectorAll('[data-section]')].map(section => ({
+    id: section.dataset.categoryId,
     name: section.querySelector('.section-name').textContent,
     count: section.querySelector('.section-count').textContent,
-    items: [...section.querySelectorAll('input[type="checkbox"][data-id]')].map(box => ({ id: box.dataset.id, checked: box.checked }))
+    items: [...section.querySelectorAll('.item')].map(row => ({
+      id: row.dataset.itemId,
+      text: row.querySelector('.item-text > span')?.textContent,
+      checked: row.querySelector('input[type="checkbox"][data-id]')?.checked,
+      editButton: row.querySelector('[data-action="edit-item"]')?.textContent,
+      deleteButton: row.querySelector('[data-action="delete-item"]')?.textContent
+    }))
   }))
 })`);
 
@@ -91,6 +106,13 @@ await send('Emulation.setDeviceMetricsOverride', {
   mobile: true
 });
 await sleep(800);
+const mobileGeometry = await evaluate(`({
+  innerWidth: window.innerWidth,
+  innerHeight: window.innerHeight,
+  documentWidth: document.documentElement.scrollWidth,
+  bodyWidth: document.body.scrollWidth
+})`);
+assert.deepEqual(mobileGeometry, { innerWidth: 390, innerHeight: 844, documentWidth: 390, bodyWidth: 390 });
 
 await evaluate(`(async () => {
   if ('serviceWorker' in navigator) {
@@ -137,11 +159,18 @@ assert.equal(initial.done, '0');
 assert.equal(initial.total, '26');
 assert.equal(initial.percent, '0%');
 assert.equal(initial.manifest, 'manifest.webmanifest');
+assert.ok(initial.categories.every(category => category.items.every(item => item.editButton === 'Modifica' && item.deleteButton === '×')));
 assert.ok(await evaluate(`Boolean(document.getElementById('newCategory'))`));
 
 await evaluate(`document.getElementById('newCategory').click()`);
 await submitDialog({ name: '' });
 assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal(await evaluate('document.getElementById("editorError").textContent'), 'Inserisci un nome prima di salvare.');
+assert.equal(await evaluate('document.getElementById("editorName").getAttribute("aria-invalid")'), 'true');
+await submitDialog({ name: '   ' });
+assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal(await evaluate('document.getElementById("editorError").textContent'), 'Inserisci un nome prima di salvare.');
+assert.equal(await evaluate('document.getElementById("editorName").getAttribute("aria-invalid")'), 'true');
 assert.equal((await snapshot()).categories.length, 3);
 await evaluate(`document.getElementById('editorCancel').click()`);
 
@@ -150,6 +179,25 @@ await sleep(150);
 const afterBaselineCheck = await snapshot();
 assert.equal(afterBaselineCheck.done, '1');
 assert.equal(afterBaselineCheck.categories[0].count, '1/2');
+
+const predefinedItemBeforeEdit = afterBaselineCheck.categories[0].items.find(item => item.id === 'interfoni');
+await evaluate(`document.querySelector('[data-action="edit-item"][data-item-id="interfoni"]').click()`);
+assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal(await evaluate('document.getElementById("editorTitle").textContent'), 'Modifica elemento');
+assert.equal(await evaluate('document.getElementById("editorName").value'), 'Caricare gli interfoni nei caschi');
+await submitDialog({ name: 'Caricare gli interfoni nei caschi verificati' });
+await sleep(150);
+const afterPredefinedEdit = await snapshot();
+const predefinedCategoryAfterEdit = afterPredefinedEdit.categories[0];
+const predefinedItemAfterEdit = predefinedCategoryAfterEdit.items.find(item => item.id === predefinedItemBeforeEdit.id);
+assert.equal(predefinedItemAfterEdit.text, 'Caricare gli interfoni nei caschi verificati');
+assert.equal(predefinedItemAfterEdit.id, predefinedItemBeforeEdit.id);
+assert.equal(predefinedItemAfterEdit.checked, true);
+assert.equal(predefinedCategoryAfterEdit.id, afterBaselineCheck.categories[0].id);
+assert.equal(predefinedCategoryAfterEdit.count, '1/2');
+assert.equal(afterPredefinedEdit.total, '26');
+assert.equal(afterPredefinedEdit.done, '1');
+assert.equal(afterPredefinedEdit.percent, '4%');
 
 await evaluate(`document.getElementById('newCategory').click()`);
 await submitDialog({ name: 'Attrezzatura test', icon: '🧪' });
@@ -171,6 +219,23 @@ const testCategory = afterCategory.categories.find(category => category.name ===
 assert.equal(testCategory.count, '0/1');
 assert.equal(afterCategory.total, '27');
 assert.equal(afterCategory.categories.reduce((total, category) => total + category.items.length, 0), 27);
+const createdItemBeforeEdit = testCategory.items[0];
+assert.equal(createdItemBeforeEdit.text, 'Lampada test');
+assert.equal(createdItemBeforeEdit.editButton, 'Modifica');
+assert.equal(createdItemBeforeEdit.deleteButton, '×');
+
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
+  section.querySelector('[data-action="edit-item"]').click();
+})()`);
+assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal(await evaluate('document.getElementById("editorTitle").textContent'), 'Modifica elemento');
+assert.equal(await evaluate('document.getElementById("editorSubmit").textContent'), 'Salva');
+assert.equal(await evaluate('document.getElementById("editorName").value'), 'Lampada test');
+await evaluate(`document.getElementById('editorCancel').click()`);
+const afterCreatedCancel = await snapshot();
+const createdItemAfterCancel = afterCreatedCancel.categories.find(category => category.name === 'Attrezzatura test').items[0];
+assert.deepEqual(createdItemAfterCancel, createdItemBeforeEdit);
 
 await evaluate(`(() => {
   const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
@@ -183,14 +248,56 @@ assert.equal(afterNewCheck.total, '27');
 assert.equal(afterNewCheck.categories.find(category => category.name === 'Attrezzatura test').count, '1/1');
 assert.equal(afterNewCheck.percent, '7%');
 
+await evaluate(`(() => {
+  const section = [...document.querySelectorAll('[data-section]')].find(item => item.querySelector('.section-name').textContent === 'Attrezzatura test');
+  section.querySelector('[data-action="edit-item"]').click();
+})()`);
+await submitDialog({ name: '\t  ' });
+assert.equal(await evaluate('document.getElementById("editorDialog").open'), true);
+assert.equal(await evaluate('document.getElementById("editorError").textContent'), 'Inserisci un nome prima di salvare.');
+const afterWhitespaceEdit = await snapshot();
+const whitespaceItem = afterWhitespaceEdit.categories.find(category => category.name === 'Attrezzatura test').items[0];
+assert.equal(whitespaceItem.text, 'Lampada test');
+assert.equal(whitespaceItem.id, createdItemBeforeEdit.id);
+assert.equal(whitespaceItem.checked, true);
+await submitDialog({ name: 'Lampada test modificata' });
+await sleep(150);
+const afterCreatedEdit = await snapshot();
+const editedCreatedCategory = afterCreatedEdit.categories.find(category => category.name === 'Attrezzatura test');
+const editedCreatedItem = editedCreatedCategory.items[0];
+assert.equal(editedCreatedItem.text, 'Lampada test modificata');
+assert.equal(editedCreatedItem.id, createdItemBeforeEdit.id);
+assert.equal(editedCreatedCategory.id, testCategory.id);
+assert.equal(editedCreatedItem.checked, true);
+assert.equal(editedCreatedCategory.count, '1/1');
+assert.equal(afterCreatedEdit.total, '27');
+assert.equal(afterCreatedEdit.done, '2');
+assert.equal(afterCreatedEdit.percent, '7%');
+
 await reload();
 const afterReload = await snapshot();
 assert.equal(afterReload.done, '2');
 assert.equal(afterReload.total, '27');
-assert.equal(afterReload.categories.find(category => category.name === 'Attrezzatura test').items[0].checked, true);
+assert.equal(afterReload.categories[0].items.find(item => item.id === predefinedItemBeforeEdit.id).text, 'Caricare gli interfoni nei caschi verificati');
+assert.equal(afterReload.categories[0].items.find(item => item.id === predefinedItemBeforeEdit.id).checked, true);
+const reloadedCreatedCategory = afterReload.categories.find(category => category.name === 'Attrezzatura test');
+assert.equal(reloadedCreatedCategory.items[0].text, 'Lampada test modificata');
+assert.equal(reloadedCreatedCategory.items[0].id, createdItemBeforeEdit.id);
+assert.equal(reloadedCreatedCategory.id, editedCreatedCategory.id);
+assert.equal(reloadedCreatedCategory.items[0].checked, true);
+assert.equal(reloadedCreatedCategory.items[0].editButton, 'Modifica');
+assert.equal(reloadedCreatedCategory.items[0].deleteButton, '×');
 const persistedState = await evaluate(`JSON.parse(localStorage.getItem('campeggio-checklist-v2'))`);
 assert.equal(persistedState.version, 2);
 assert.equal(persistedState.categories.length, 4);
+const persistedCreatedCategory = persistedState.categories.find(category => category.id === editedCreatedCategory.id);
+assert.equal(persistedCreatedCategory.name, 'Attrezzatura test');
+assert.equal(persistedCreatedCategory.items[0].text, 'Lampada test modificata');
+assert.equal(persistedCreatedCategory.items[0].id, createdItemBeforeEdit.id);
+assert.equal(persistedCreatedCategory.items[0].checked, true);
+const persistedPredefinedItem = persistedState.categories[0].items.find(item => item.id === predefinedItemBeforeEdit.id);
+assert.equal(persistedPredefinedItem.text, 'Caricare gli interfoni nei caschi verificati');
+assert.equal(persistedPredefinedItem.checked, true);
 
 const confirmMessages = [];
 await evaluate(`window.confirm = message => { window.__lastConfirm = message; return true; }`);
@@ -253,6 +360,7 @@ if (!await evaluate('Boolean(navigator.serviceWorker.controller)')) {
 }
 const controller = await evaluate('Boolean(navigator.serviceWorker.controller)');
 assert.equal(controller, true);
+assert.ok((await evaluate('caches.keys()')).includes('campeggio-checklist-v4'));
 await send('Network.emulateNetworkConditions', {
   offline: true,
   latency: 0,
@@ -276,7 +384,7 @@ await send('Network.emulateNetworkConditions', {
 
 await evaluate(`localStorage.clear(); sessionStorage.clear()`);
 await reload();
-const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
 await fs.writeFile('/opt/data/campeggio-checklist/preview.png', Buffer.from(screenshot.data, 'base64'));
 assert.deepEqual(runtimeErrors, []);
 console.log(JSON.stringify({ initial, afterMigration, afterReload, afterItemDelete, afterCategoryDelete, offlineReload, runtimeErrors, screenshot: '/opt/data/campeggio-checklist/preview.png' }, null, 2));

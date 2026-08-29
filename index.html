@@ -356,6 +356,15 @@
       line-height: 1;
     }
 
+    .item-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      align-self: center;
+    }
+
+    .edit-item { min-width: 76px; }
+
     .empty {
       margin: 0;
       padding: 12px 8px 4px;
@@ -507,12 +516,12 @@
     </main>
 
     <dialog class="editor-dialog" id="editorDialog" aria-labelledby="editorTitle">
-      <form class="editor-form" id="editorForm" method="dialog">
+      <form class="editor-form" id="editorForm" method="dialog" novalidate>
         <h2 id="editorTitle">Nuova categoria</h2>
         <div class="editor-fields">
           <label class="editor-field" for="editorName">
             <span id="editorNameLabel">Nome categoria</span>
-            <input id="editorName" name="name" type="text" required maxlength="120" autocomplete="off">
+            <input id="editorName" name="name" type="text" required maxlength="120" autocomplete="off" aria-describedby="editorError">
           </label>
           <label class="editor-field" id="editorIconField" for="editorIcon">
             <span>Emoji o icona (facoltativa)</span>
