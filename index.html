@@ -192,6 +192,13 @@
     .btn.primary { color: white; border-color: var(--forest); background: var(--forest); }
     .btn.danger { color: #9d3c28; }
 
+    .btn:focus-visible,
+    .section-btn:focus-visible,
+    .editor-dialog input:focus-visible {
+      outline: 3px solid rgba(239,125,50,.35);
+      outline-offset: 3px;
+    }
+
     main { padding-top: 22px; }
 
     .section {
@@ -217,9 +224,12 @@
       align-items: center;
       gap: 11px;
       margin: 0;
+      min-width: 0;
       font-size: 1.08rem;
       letter-spacing: -.02em;
     }
+
+    .section-name { overflow-wrap: anywhere; }
 
     .section-icon {
       display: grid;
@@ -241,12 +251,34 @@
       font-weight: 800;
     }
 
+    .section-actions {
+      display: flex;
+      flex: none;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .section-btn {
+      min-height: 40px;
+      padding: 7px 9px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      color: var(--forest-2);
+      background: white;
+      font-size: .78rem;
+      font-weight: 750;
+      cursor: pointer;
+    }
+
+    .section-btn.danger { color: #9d3c28; }
+
     .items { padding: 6px 12px 12px; }
 
     .item {
       position: relative;
       display: grid;
-      grid-template-columns: 30px 1fr;
+      grid-template-columns: minmax(0, 1fr) auto;
       gap: 10px;
       align-items: start;
       min-height: 53px;
@@ -257,6 +289,15 @@
     }
 
     .item:last-child { border-bottom: 0; }
+
+    .item-check {
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      min-width: 0;
+      cursor: pointer;
+    }
 
     .item input {
       appearance: none;
@@ -306,6 +347,80 @@
       text-decoration-thickness: 1.5px;
     }
 
+    .delete-item {
+      align-self: center;
+      width: 40px;
+      min-height: 40px;
+      padding: 5px;
+      font-size: 1rem;
+      line-height: 1;
+    }
+
+    .empty {
+      margin: 0;
+      padding: 12px 8px 4px;
+      color: var(--muted);
+      font-size: .88rem;
+    }
+
+    .editor-dialog {
+      width: min(calc(100% - 28px), 430px);
+      padding: 0;
+      border: 0;
+      border-radius: 22px;
+      color: var(--ink);
+      background: var(--paper);
+      box-shadow: 0 20px 70px rgba(23,60,45,.28);
+    }
+
+    .editor-dialog::backdrop { background: rgba(12,35,26,.58); }
+
+    .editor-form { padding: 22px; }
+
+    .editor-form h2 {
+      margin: 0;
+      font-size: 1.3rem;
+      letter-spacing: -.03em;
+    }
+
+    .editor-fields {
+      display: grid;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .editor-field {
+      display: grid;
+      gap: 6px;
+      color: var(--forest);
+      font-size: .88rem;
+      font-weight: 750;
+    }
+
+    .editor-field input {
+      width: 100%;
+      min-height: 46px;
+      padding: 10px 12px;
+      border: 1px solid #bdc9c1;
+      border-radius: 12px;
+      color: var(--ink);
+      background: white;
+    }
+
+    .editor-error {
+      min-height: 1.35em;
+      margin: 10px 0 0;
+      color: #9d3c28;
+      font-size: .84rem;
+    }
+
+    .editor-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 9px;
+      margin-top: 4px;
+    }
+
     .tip {
       margin: 18px 0 0;
       padding: 16px 17px;
@@ -334,6 +449,22 @@
       .actions { display: flex; }
       .btn { min-width: 150px; }
       .item { padding-left: 12px; padding-right: 12px; }
+    }
+
+    @media (max-width: 430px) {
+      .section-head {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
+      }
+      .section-title { grid-column: 1; grid-row: 1; align-items: flex-start; }
+      .section-count { grid-column: 2; grid-row: 1; }
+      .section-actions {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        justify-content: flex-start;
+      }
+      .section-btn { white-space: nowrap; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -365,159 +496,42 @@
         <button class="btn primary" type="button" id="completeAll">Spunta tutto</button>
         <button class="btn danger" type="button" id="resetAll">Azzera lista</button>
         <button class="btn" type="button" id="sharePage">Condividi</button>
+        <button class="btn" type="button" id="newCategory">Nuova categoria</button>
       </div>
     </section>
 
     <main>
-      <section class="section" data-section>
-        <div class="section-head">
-          <h2 class="section-title"><span class="section-icon">🎧</span> Caschi ed elettronica</h2>
-          <span class="section-count">0/2</span>
-        </div>
-        <div class="items">
-          <label class="item"><input type="checkbox" data-id="interfoni"><span class="item-text">Caricare gli interfoni nei caschi</span></label>
-          <label class="item"><input type="checkbox" data-id="elettronica"><span class="item-text">Caricare cellulare, power bank e altri dispositivi</span></label>
-        </div>
-      </section>
-
-      <section class="section" data-section>
-        <div class="section-head">
-          <h2 class="section-title"><span class="section-icon">🔥</span> Carne e barbecue</h2>
-          <span class="section-count">0/7</span>
-        </div>
-        <div class="items">
-          <label class="item"><input type="checkbox" data-id="carne"><span class="item-text">Carne e alimenti da cucinare</span></label>
-          <label class="item"><input type="checkbox" data-id="grill"><span class="item-text">Barbecue usa e getta Big Jeff<span class="item-note">Sono già pronti: non servono altro carbone o cubetti accendifuoco.</span></span></label>
-          <label class="item"><input type="checkbox" data-id="accendino"><span class="item-text">Accendino lungo o fiammiferi lunghi</span></label>
-          <label class="item"><input type="checkbox" data-id="pinza"><span class="item-text">Pinza da cucina</span></label>
-          <label class="item"><input type="checkbox" data-id="guanto"><span class="item-text">Guanto termico</span></label>
-          <label class="item"><input type="checkbox" data-id="acqua-spegnimento"><span class="item-text">Acqua dedicata allo spegnimento</span></label>
-          <label class="item"><input type="checkbox" data-id="permesso-fuoco"><span class="item-text">Verificare che il campeggio permetta barbecue e fiamme</span></label>
-        </div>
-      </section>
-
-      <section class="section" data-section>
-        <div class="section-head">
-          <h2 class="section-title"><span class="section-icon">🥾</span> Zainetto trekking</h2>
-          <span class="section-count">0/17</span>
-        </div>
-        <div class="items">
-          <label class="item"><input type="checkbox" data-id="acqua"><span class="item-text">Riempire la sacca con 1–1,5 litri d’acqua</span></label>
-          <label class="item"><input type="checkbox" data-id="perdite"><span class="item-text">Controllare che sacca, tappo e tubo non perdano</span></label>
-          <label class="item"><input type="checkbox" data-id="telefono-zaino"><span class="item-text">Telefono, power bank e cavetto</span></label>
-          <label class="item"><input type="checkbox" data-id="wikiloc"><span class="item-text">Percorso Wikiloc disponibile offline</span></label>
-          <label class="item"><input type="checkbox" data-id="mappa-offline"><span class="item-text">Mappa della zona scaricata offline</span></label>
-          <label class="item"><input type="checkbox" data-id="gps-test"><span class="item-text">Verificare che il GPS mostri correttamente la posizione</span></label>
-          <label class="item"><input type="checkbox" data-id="snack"><span class="item-text">Uno snack leggero</span></label>
-          <label class="item"><input type="checkbox" data-id="rifiuti"><span class="item-text">Piccola busta per i rifiuti</span></label>
-          <label class="item"><input type="checkbox" data-id="cappellino"><span class="item-text">Cappellino</span></label>
-          <label class="item"><input type="checkbox" data-id="occhiali"><span class="item-text">Occhiali da sole</span></label>
-          <label class="item"><input type="checkbox" data-id="crema"><span class="item-text">Crema solare</span></label>
-          <label class="item"><input type="checkbox" data-id="giacca"><span class="item-text">Giacca leggera, antivento o impermeabile compatto</span></label>
-          <label class="item"><input type="checkbox" data-id="soccorso"><span class="item-text">Mini kit di primo soccorso e cerotto per vesciche</span></label>
-          <label class="item"><input type="checkbox" data-id="farmaci"><span class="item-text">Medicinali personali</span></label>
-          <label class="item"><input type="checkbox" data-id="documenti"><span class="item-text">Documenti, chiavi e fazzoletti</span></label>
-          <label class="item"><input type="checkbox" data-id="torcia"><span class="item-text">Torcia frontale<span class="item-note">Solo se c’è il rischio di rientrare tardi.</span></span></label>
-          <label class="item"><input type="checkbox" data-id="condivisione"><span class="item-text">Condividere percorso e orario di rientro con qualcuno</span></label>
-        </div>
-      </section>
+      <div id="categories" aria-live="polite"></div>
 
       <p class="tip"><strong>Prima di partire:</strong> controlla meteo, stato del sentiero e ora del tramonto. Usa i barbecue soltanto all’aperto, su una superficie stabile e non combustibile.</p>
     </main>
+
+    <dialog class="editor-dialog" id="editorDialog" aria-labelledby="editorTitle">
+      <form class="editor-form" id="editorForm" method="dialog">
+        <h2 id="editorTitle">Nuova categoria</h2>
+        <div class="editor-fields">
+          <label class="editor-field" for="editorName">
+            <span id="editorNameLabel">Nome categoria</span>
+            <input id="editorName" name="name" type="text" required maxlength="120" autocomplete="off">
+          </label>
+          <label class="editor-field" id="editorIconField" for="editorIcon">
+            <span>Emoji o icona (facoltativa)</span>
+            <input id="editorIcon" name="icon" type="text" maxlength="8" autocomplete="off" inputmode="text" placeholder="⛺">
+          </label>
+        </div>
+        <p class="editor-error" id="editorError" role="alert"></p>
+        <div class="editor-actions">
+          <button class="btn" type="button" id="editorCancel">Annulla</button>
+          <button class="btn primary" type="submit" id="editorSubmit">Aggiungi</button>
+        </div>
+      </form>
+    </dialog>
 
     <footer>
       Salvataggio automatico sul dispositivo · Nessun account necessario
     </footer>
   </div>
 
-  <script>
-    (() => {
-      const KEY = 'campeggio-checklist-v1';
-      const checks = [...document.querySelectorAll('input[type="checkbox"][data-id]')];
-      const progress = document.getElementById('progress');
-      const progressCard = document.getElementById('progressCard');
-      const doneCount = document.getElementById('doneCount');
-      const totalCount = document.getElementById('totalCount');
-      const percent = document.getElementById('percent');
-      const networkStatus = document.getElementById('networkStatus');
-
-      const readState = () => {
-        try { return JSON.parse(localStorage.getItem(KEY)) || {}; }
-        catch { return {}; }
-      };
-
-      const saveState = () => {
-        const state = Object.fromEntries(checks.map(box => [box.dataset.id, box.checked]));
-        localStorage.setItem(KEY, JSON.stringify(state));
-        localStorage.setItem(`${KEY}-updated`, new Date().toISOString());
-      };
-
-      const render = () => {
-        const completed = checks.filter(box => box.checked).length;
-        const value = checks.length ? Math.round((completed / checks.length) * 100) : 0;
-        doneCount.textContent = completed;
-        totalCount.textContent = checks.length;
-        percent.textContent = `${value}%`;
-        progress.value = value;
-
-        document.querySelectorAll('[data-section]').forEach(section => {
-          const sectionChecks = [...section.querySelectorAll('input[type="checkbox"]')];
-          const sectionDone = sectionChecks.filter(box => box.checked).length;
-          section.querySelector('.section-count').textContent = `${sectionDone}/${sectionChecks.length}`;
-        });
-
-        if (completed === checks.length && checks.length) {
-          progressCard.classList.remove('celebrate');
-          requestAnimationFrame(() => progressCard.classList.add('celebrate'));
-        }
-      };
-
-      const state = readState();
-      checks.forEach(box => {
-        box.checked = Boolean(state[box.dataset.id]);
-        box.addEventListener('change', () => { saveState(); render(); });
-      });
-
-      document.getElementById('completeAll').addEventListener('click', () => {
-        checks.forEach(box => { box.checked = true; });
-        saveState();
-        render();
-      });
-
-      document.getElementById('resetAll').addEventListener('click', () => {
-        if (!confirm('Vuoi davvero togliere tutte le spunte?')) return;
-        checks.forEach(box => { box.checked = false; });
-        saveState();
-        render();
-      });
-
-      document.getElementById('sharePage').addEventListener('click', async () => {
-        const data = { title: document.title, text: 'Checklist campeggio', url: location.href };
-        try {
-          if (navigator.share) await navigator.share(data);
-          else {
-            await navigator.clipboard.writeText(location.href);
-            alert('Link copiato!');
-          }
-        } catch (error) {
-          if (error.name !== 'AbortError') prompt('Copia questo link:', location.href);
-        }
-      });
-
-      const updateNetwork = () => {
-        const online = navigator.onLine;
-        networkStatus.textContent = online ? 'Online' : 'Offline';
-        networkStatus.classList.toggle('offline', !online);
-      };
-      addEventListener('online', updateNetwork);
-      addEventListener('offline', updateNetwork);
-      updateNetwork();
-      render();
-
-      if ('serviceWorker' in navigator) {
-        addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
-      }
-    })();
-  </script>
+  <script src="app.js"></script>
 </body>
 </html>
